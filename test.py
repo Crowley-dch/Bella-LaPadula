@@ -26,7 +26,6 @@ class TestBLPModel(unittest.TestCase):
         self.assertEqual(result, 'bob wrote to doc1.')
 
     def test_write_access_denied(self):
-        # charlie (TOP_SECRET) не может писать в doc1 (CONFIDENTIAL) — нарушает no write down
         with self.assertRaises(AccessDenied):
             self.kernel.write('charlie', 'doc1')
 
