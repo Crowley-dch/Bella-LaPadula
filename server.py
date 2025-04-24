@@ -67,7 +67,7 @@ class SecurityKernel:
         o = self.objects.get(oid)
         if s is None or o is None:
             raise KeyError("Unknown subject or object")
-        if not o.dominates(s):
+        if not (o.level >= s.level and o.categories == s.categories):
             raise AccessDenied(f"{sid} cannot write to {oid}")
         return f"{sid} wrote to {oid}."
 
@@ -77,7 +77,6 @@ class SecurityKernel:
     def list_objects(self):
         return {oid: lbl.to_dict() for oid, lbl in self.objects.items()}
 
-# Server logic
 def handle_client(conn, addr, kernel):
     print(f"Connection from {addr}")
     with conn:
