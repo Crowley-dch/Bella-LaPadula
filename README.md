@@ -1,7 +1,7 @@
-# Bella-LaPadula
+# Bell-LaPadula
 a system for storing subjects and objects based on the Bell-LaPadula model
 
-# Bella-LaPadula Model Implementation
+# Bell-LaPadula Model Implementation
 
 This is a Python-based implementation of the **Bell-LaPadula (BLP)** model. The project demonstrates a simplified system for access control between subjects and objects with enforced information flow restrictions based on security labels.
 
