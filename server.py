@@ -1,6 +1,7 @@
 import socket
 import threading
 import json
+import sqlite3
 
 
 class ClearanceLevel:
@@ -17,74 +18,88 @@ class ClearanceLevel:
     }
 
 
-class Label:
-    def __init__(self, level):
-        self.level = level
-
-    def dominates(self, other):
-        return self.level >= other.level
-
-    def to_dict(self):
-        return {'level': self.level}
-
-
 class AccessDenied(Exception): pass
-
-
 class TranquilityViolation(Exception): pass
 
 
 class SecurityKernel:
-    def __init__(self):
-        self.subjects = {}
-        self.objects = {}
+    def __init__(self, db_path="security.db"):
+        self.db = sqlite3.connect(db_path, check_same_thread=False)
+        self.cursor = self.db.cursor()
+        self._init_db()
+
+    def _init_db(self):
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS subjects (
+                id TEXT PRIMARY KEY,
+                level INTEGER
+            )
+        """)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS objects (
+                id TEXT PRIMARY KEY,
+                level INTEGER
+            )
+        """)
+        self.db.commit()
 
     def add_subject(self, sid, level):
-        self.subjects[sid] = Label(level)
+        self.cursor.execute("INSERT OR REPLACE INTO subjects (id, level) VALUES (?, ?)", (sid, level))
+        self.db.commit()
         return f"Subject '{sid}' added with level {ClearanceLevel.names[level]}"
 
     def add_object(self, oid, level):
-        self.objects[oid] = Label(level)
+        self.cursor.execute("INSERT OR REPLACE INTO objects (id, level) VALUES (?, ?)", (oid, level))
+        self.db.commit()
         return f"Object '{oid}' added with level {ClearanceLevel.names[level]}"
 
     def set_subject_level(self, sid, new_level):
-        old = self.subjects.get(sid)
-        if old is None:
+        self.cursor.execute("SELECT level FROM subjects WHERE id = ?", (sid,))
+        row = self.cursor.fetchone()
+        if not row:
             raise KeyError(f"Unknown subject '{sid}'")
-        if new_level < old.level:
+        old_level = row[0]
+        if new_level < old_level:
             raise TranquilityViolation(f"Cannot lower level of '{sid}'")
-        self.subjects[sid] = Label(new_level)
+        self.cursor.execute("UPDATE subjects SET level = ? WHERE id = ?", (new_level, sid))
+        self.db.commit()
         return f"Level of '{sid}' changed to {ClearanceLevel.names[new_level]}"
 
     def read(self, sid, oid):
-        s = self.subjects.get(sid)
-        o = self.objects.get(oid)
-        if s is None or o is None:
-            raise KeyError("Unknown subject or object")
-        if not s.dominates(o):
-            raise AccessDenied(
-                f"{sid} ({ClearanceLevel.names[s.level]}) cannot read {oid} ({ClearanceLevel.names[o.level]})"
-            )
-        return {'object': oid, 'level': o.to_dict()}
+        s_level = self._get_subject_level(sid)
+        o_level = self._get_object_level(oid)
+        if s_level < o_level:
+            raise AccessDenied(f"{sid} ({ClearanceLevel.names[s_level]}) cannot read {oid} ({ClearanceLevel.names[o_level]})")
+        return {'object': oid, 'level': {'level': o_level}}
 
     def write(self, sid, oid):
-        s = self.subjects.get(sid)
-        o = self.objects.get(oid)
-        if s is None or o is None:
-            raise KeyError("Unknown subject or object")
-        if o.level < s.level:
-            raise AccessDenied(
-                f"{sid} ({ClearanceLevel.names[s.level]}) cannot write to {oid} ({ClearanceLevel.names[o.level]})"
-            )
+        s_level = self._get_subject_level(sid)
+        o_level = self._get_object_level(oid)
+        if s_level > o_level:
+            raise AccessDenied(f"{sid} ({ClearanceLevel.names[s_level]}) cannot write to {oid} ({ClearanceLevel.names[o_level]})")
         return f"{sid} wrote to {oid}."
 
+    def _get_subject_level(self, sid):
+        self.cursor.execute("SELECT level FROM subjects WHERE id = ?", (sid,))
+        row = self.cursor.fetchone()
+        if row is None:
+            raise KeyError(f"Unknown subject '{sid}'")
+        return row[0]
+
+    def _get_object_level(self, oid):
+        self.cursor.execute("SELECT level FROM objects WHERE id = ?", (oid,))
+        row = self.cursor.fetchone()
+        if row is None:
+            raise KeyError(f"Unknown object '{oid}'")
+        return row[0]
+
     def list_subjects(self):
-        return {sid: {'level': ClearanceLevel.names[lbl.level]}
-                for sid, lbl in self.subjects.items()}
+        self.cursor.execute("SELECT id, level FROM subjects")
+        return {row[0]: {'level': ClearanceLevel.names[row[1]]} for row in self.cursor.fetchall()}
 
     def list_objects(self):
-        return {oid: {'level': ClearanceLevel.names[lbl.level]}
-                for oid, lbl in self.objects.items()}
+        self.cursor.execute("SELECT id, level FROM objects")
+        return {row[0]: {'level': ClearanceLevel.names[row[1]]} for row in self.cursor.fetchall()}
 
 
 def handle_client(conn, addr, kernel):
