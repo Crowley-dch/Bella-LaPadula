@@ -204,7 +204,7 @@ def handle_client(conn, addr, kernel):
 
 if __name__ == '__main__':
     HOST = 'localhost'
-    PORT = 5011
+    PORT = 5010
     kernel = SecurityKernel()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

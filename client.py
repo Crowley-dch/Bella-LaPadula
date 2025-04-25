@@ -5,7 +5,7 @@ from tkinter import simpledialog, messagebox
 
 
 class Client:
-    def __init__(self, host='localhost', port=5011):
+    def __init__(self, host='localhost', port=5010):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
         self.file = self.sock.makefile('r')
