@@ -5,7 +5,7 @@ from tkinter import simpledialog, messagebox
 
 
 class Client:
-    def __init__(self, host='localhost', port=5010):
+    def __init__(self, host='localhost', port=5011):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
         self.file = self.sock.makefile('r')
@@ -21,7 +21,7 @@ class ClientGUI:
     def __init__(self):
         self.client = Client()
         self.root = tk.Tk()
-        self.root.title("Simplified BLP Client")
+        self.root.title("BLP Model with Access Override")
 
         frame = tk.Frame(self.root)
         frame.pack(padx=10, pady=10)
@@ -38,6 +38,8 @@ class ClientGUI:
             ("Add Subject", self.add_subject),
             ("Add Object", self.add_object),
             ("Set Level", self.set_level),
+            ("Override Level", self.override_level),
+            ("Restore Level", self.restore_level),
             ("Read", self.do_read),
             ("Write", self.do_write),
             ("List Subjects", self.list_subjects),
@@ -80,6 +82,20 @@ class ClientGUI:
         resp = self.client.send('set_level', {'id': sid, 'level': level})
         self.show_response(resp)
 
+    def override_level(self):
+        sid = simpledialog.askstring("Override Level", "Subject ID:")
+        if not sid: return
+        level = self.prompt_level("Temporary Level (must be lower than current)")
+        if level is None: return
+        resp = self.client.send('override_level', {'sid': sid, 'level': level})
+        self.show_response(resp)
+
+    def restore_level(self):
+        sid = simpledialog.askstring("Restore Level", "Subject ID:")
+        if not sid: return
+        resp = self.client.send('restore_level', {'sid': sid})
+        self.show_response(resp)
+
     def do_read(self):
         sid = simpledialog.askstring("Read", "Subject ID:")
         oid = simpledialog.askstring("Read", "Object ID:")
@@ -98,8 +114,13 @@ class ClientGUI:
         resp = self.client.send('list_subjects')
         if resp['status'] == 'ok':
             items = resp['result']
-            text = '\n'.join(f"{k}: {v['level']}" for k, v in items.items()) or 'None'
-            messagebox.showinfo("Subjects", text)
+            text = ""
+            for sid, info in items.items():
+                text += f"{sid}: Original={info['original_level']}, Current={info['current_level']}"
+                if 'temporary_level' in info:
+                    text += f" (Temporary: {info['temporary_level']})"
+                text += "\n"
+            messagebox.showinfo("Subjects", text or "None")
         else:
             self.show_response(resp)
 
