@@ -43,13 +43,6 @@ class SecurityKernel:
                 level INTEGER
             )
         """)
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS temp_levels (
-                sid TEXT PRIMARY KEY,
-                original_level INTEGER,
-                temp_level INTEGER
-            )
-        """)
         self.db.commit()
 
     def add_subject(self, sid, level):
@@ -62,70 +55,34 @@ class SecurityKernel:
         self.db.commit()
         return f"Object '{oid}' added with level {ClearanceLevel.names[level]}"
 
-    def set_subject_level(self, sid, new_level):
-        self.cursor.execute("SELECT level FROM subjects WHERE id = ?", (sid,))
-        row = self.cursor.fetchone()
-        if not row:
-            raise KeyError(f"Unknown subject '{sid}'")
-        old_level = row[0]
-        if new_level < old_level:
-            raise TranquilityViolation(f"Cannot lower level of '{sid}'")
-        self.cursor.execute("UPDATE subjects SET level = ? WHERE id = ?", (new_level, sid))
-        self.db.commit()
-        return f"Level of '{sid}' changed to {ClearanceLevel.names[new_level]}"
-
-    def override_level(self, sid, new_level):
-        """Temporarily override subject's clearance level"""
-        self.cursor.execute("SELECT level FROM subjects WHERE id = ?", (sid,))
-        row = self.cursor.fetchone()
-        if not row:
-            raise KeyError(f"Unknown subject '{sid}'")
-
-        original_level = row[0]
-
-        if new_level >= original_level:
-            raise ValueError("Can only override to lower level")
-
-        # Check if already has temporary level
-        self.cursor.execute("SELECT 1 FROM temp_levels WHERE sid = ?", (sid,))
-        if self.cursor.fetchone():
-            self.cursor.execute("UPDATE temp_levels SET temp_level = ? WHERE sid = ?",
-                                (new_level, sid))
-        else:
-            self.cursor.execute("INSERT INTO temp_levels (sid, original_level, temp_level) VALUES (?, ?, ?)",
-                                (sid, original_level, new_level))
-        self.db.commit()
-        return f"Subject '{sid}' temporary level set to {ClearanceLevel.names[new_level]}"
-
-    def restore_level(self, sid):
-        """Restore subject's original clearance level"""
-        self.cursor.execute("DELETE FROM temp_levels WHERE sid = ?", (sid,))
-        self.db.commit()
-        return f"Subject '{sid}' restored to original level"
-
     def read(self, sid, oid):
         s_level = self._get_subject_level(sid)
         o_level = self._get_object_level(oid)
+
         if s_level < o_level:
-            raise AccessDenied(
-                f"{sid} ({ClearanceLevel.names[s_level]}) cannot read {oid} ({ClearanceLevel.names[o_level]})")
+            self._set_subject_level(sid, o_level)
+            return {
+                'object': oid,
+                'level': {'level': o_level},
+                'notice': f"Subject '{sid}' level was automatically raised to {ClearanceLevel.names[o_level]}"
+            }
+
         return {'object': oid, 'level': {'level': o_level}}
 
     def write(self, sid, oid):
         s_level = self._get_subject_level(sid)
         o_level = self._get_object_level(oid)
+
         if s_level > o_level:
-            raise AccessDenied(
-                f"{sid} ({ClearanceLevel.names[s_level]}) cannot write to {oid} ({ClearanceLevel.names[o_level]})")
+            self._set_subject_level(sid, o_level)
+            return {
+                'result': f"{sid} wrote to {oid}.",
+                'notice': f"Subject '{sid}' level was automatically lowered to {ClearanceLevel.names[o_level]}"
+            }
+
         return f"{sid} wrote to {oid}."
 
     def _get_subject_level(self, sid):
-        """Get current level (temporary if exists, otherwise original)"""
-        self.cursor.execute("SELECT temp_level FROM temp_levels WHERE sid = ?", (sid,))
-        row = self.cursor.fetchone()
-        if row:
-            return row[0]
-
         self.cursor.execute("SELECT level FROM subjects WHERE id = ?", (sid,))
         row = self.cursor.fetchone()
         if row is None:
@@ -139,23 +96,14 @@ class SecurityKernel:
             raise KeyError(f"Unknown object '{oid}'")
         return row[0]
 
+    def _set_subject_level(self, sid, new_level):
+        self.cursor.execute("UPDATE subjects SET level = ? WHERE id = ?", (new_level, sid))
+        self.db.commit()
+        return new_level
+
     def list_subjects(self):
-        self.cursor.execute("""
-            SELECT s.id, s.level, t.temp_level 
-            FROM subjects s
-            LEFT JOIN temp_levels t ON s.id = t.sid
-        """)
-        results = {}
-        for row in self.cursor.fetchall():
-            sid, original_level, temp_level = row
-            info = {
-                'original_level': ClearanceLevel.names[original_level],
-                'current_level': ClearanceLevel.names[temp_level if temp_level is not None else original_level]
-            }
-            if temp_level is not None:
-                info['temporary_level'] = ClearanceLevel.names[temp_level]
-            results[sid] = info
-        return results
+        self.cursor.execute("SELECT id, level FROM subjects")
+        return {row[0]: {'level': ClearanceLevel.names[row[1]]} for row in self.cursor.fetchall()}
 
     def list_objects(self):
         self.cursor.execute("SELECT id, level FROM objects")
@@ -179,12 +127,6 @@ def handle_client(conn, addr, kernel):
                     result = kernel.add_subject(params['id'], params['level'])
                 elif action == 'add_object':
                     result = kernel.add_object(params['id'], params['level'])
-                elif action == 'set_level':
-                    result = kernel.set_subject_level(params['id'], params['level'])
-                elif action == 'override_level':
-                    result = kernel.override_level(params['sid'], params['level'])
-                elif action == 'restore_level':
-                    result = kernel.restore_level(params['sid'])
                 elif action == 'read':
                     result = kernel.read(params['subj_id'], params['obj_id'])
                 elif action == 'write':
@@ -202,7 +144,7 @@ def handle_client(conn, addr, kernel):
     print(f"Disconnected {addr}")
 
 
-if __name__ == '__main__':
+def start_server():
     HOST = 'localhost'
     PORT = 5010
     kernel = SecurityKernel()
@@ -214,3 +156,7 @@ if __name__ == '__main__':
         while True:
             conn, addr = s.accept()
             threading.Thread(target=handle_client, args=(conn, addr, kernel), daemon=True).start()
+
+
+if __name__ == '__main__':
+    start_server()
