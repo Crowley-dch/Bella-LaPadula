@@ -5,7 +5,7 @@ from tkinter import simpledialog, messagebox
 
 
 class Client:
-    def __init__(self, host='localhost', port=5010):
+    def __init__(self, host='localhost', port=5011):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
         self.file = self.sock.makefile('r')
@@ -104,7 +104,7 @@ class ClientGUI:
     def show_response(self, resp):
         if resp['status'] == 'ok':
             message = str(resp['result'])
-            if 'notice' in resp['result']:
+            if isinstance(resp['result'], dict) and 'notice' in resp['result']:
                 message += f"\n\nNotice: {resp['result']['notice']}"
             messagebox.showinfo("OK", message)
         else:

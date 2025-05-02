@@ -19,8 +19,6 @@ class ClearanceLevel:
 
 
 class AccessDenied(Exception): pass
-
-
 class TranquilityViolation(Exception): pass
 
 
@@ -48,11 +46,13 @@ class SecurityKernel:
     def add_subject(self, sid, level):
         self.cursor.execute("INSERT OR REPLACE INTO subjects (id, level) VALUES (?, ?)", (sid, level))
         self.db.commit()
+        self.generate_access_matrix()
         return f"Subject '{sid}' added with level {ClearanceLevel.names[level]}"
 
     def add_object(self, oid, level):
         self.cursor.execute("INSERT OR REPLACE INTO objects (id, level) VALUES (?, ?)", (oid, level))
         self.db.commit()
+        self.generate_access_matrix()
         return f"Object '{oid}' added with level {ClearanceLevel.names[level]}"
 
     def read(self, sid, oid):
@@ -61,12 +61,14 @@ class SecurityKernel:
 
         if s_level < o_level:
             self._set_subject_level(sid, o_level)
+            self.generate_access_matrix()
             return {
                 'object': oid,
                 'level': {'level': o_level},
                 'notice': f"Subject '{sid}' level was automatically raised to {ClearanceLevel.names[o_level]}"
             }
 
+        self.generate_access_matrix()
         return {'object': oid, 'level': {'level': o_level}}
 
     def write(self, sid, oid):
@@ -75,11 +77,13 @@ class SecurityKernel:
 
         if s_level > o_level:
             self._set_subject_level(sid, o_level)
+            self.generate_access_matrix()
             return {
                 'result': f"{sid} wrote to {oid}.",
                 'notice': f"Subject '{sid}' level was automatically lowered to {ClearanceLevel.names[o_level]}"
             }
 
+        self.generate_access_matrix()
         return f"{sid} wrote to {oid}."
 
     def _get_subject_level(self, sid):
@@ -109,6 +113,27 @@ class SecurityKernel:
         self.cursor.execute("SELECT id, level FROM objects")
         return {row[0]: {'level': ClearanceLevel.names[row[1]]} for row in self.cursor.fetchall()}
 
+    def generate_access_matrix(self):
+        self.cursor.execute("SELECT id, level FROM subjects")
+        subjects = self.cursor.fetchall()
+        self.cursor.execute("SELECT id, level FROM objects")
+        objects = self.cursor.fetchall()
+
+        matrix = {}
+        for subj_id, s_level in subjects:
+            matrix[subj_id] = {}
+            for obj_id, o_level in objects:
+                can_read = s_level >= o_level
+                can_write = s_level <= o_level
+                matrix[subj_id][obj_id] = {
+                    'read': can_read,
+                    'write': can_write
+                }
+
+        with open('access_matrix.json', 'w') as f:
+            json.dump(matrix, f, indent=4)
+
+        print("Access matrix updated.")
 
 def handle_client(conn, addr, kernel):
     print(f"Connection from {addr}")
@@ -146,7 +171,7 @@ def handle_client(conn, addr, kernel):
 
 def start_server():
     HOST = 'localhost'
-    PORT = 5010
+    PORT = 5011
     kernel = SecurityKernel()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
